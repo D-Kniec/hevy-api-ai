@@ -37,3 +37,54 @@ The system is designed around a "Fetch-Analyze-Act" loop:
 - [ ] Set up Supabase schema for workout logs.
 - [ ] Develop the prompt engineering logic for Gemini 1.5.
 - [ ] Create a basic Streamlit dashboard for manual trigger.
+
+
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart TB
+    subgraph "External World"
+        HEVY[Hevy API]
+        USER((User))
+    end
+
+    subgraph "Application Logic (Python)"
+        AGENT["AI Orchestrator\n(Core Logic)"]
+        CLI[CLI Interface]
+        ST["Streamlit App\n(Control Panel)"]
+    end
+
+    subgraph "Brain & Memory (Supabase)"
+        DB[(PostgreSQL Database)]
+        VEC["Vector Store\n(pgvector)"]
+    end
+
+    subgraph "Intelligence"
+        GEM[Gemini 1.5 Pro]
+    end
+
+    subgraph "Business Intelligence"
+        META["Metabase\n(Analytics Dashboard)"]
+    end
+
+    USER -->|Click 'Generate'| ST
+    ST --> AGENT
+
+    AGENT -->|1. Fetch History| HEVY
+    AGENT -->|2. Upsert Data| DB
+
+    DB -->|Read Data| META
+
+    AGENT -->|"3. Get Context (SQL + RAG)"| DB
+    DB -->|Context: Stats & Rules| AGENT
+    AGENT -->|4. Send Context + Prompt| GEM
+    GEM -->|5. JSON Plan| AGENT
+  
+    AGENT -->|6. POST Routine| HEVY
+    AGENT -->|7. Log Decision| DB
+
+    ```
+
+---

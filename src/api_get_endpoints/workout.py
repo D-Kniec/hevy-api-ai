@@ -35,7 +35,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("etl_workout.log"),
+        logging.FileHandler("etl_workouts.log"),
         TqdmLoggingHandler()
     ]
 )
@@ -76,7 +76,7 @@ class WorkoutModel(BaseModel):
     
     model_config = ConfigDict(populate_by_name=True)
 
-def fetch_and_transform_workout() -> List[Dict[str, Any]]:
+def fetch_and_transform_workouts() -> List[Dict[str, Any]]:
     if not HEVY_API_KEY:
         logger.critical("Missing HEVY_API_KEY")
         raise ValueError("API Key not found")
@@ -90,7 +90,7 @@ def fetch_and_transform_workout() -> List[Dict[str, Any]]:
         session.headers.update(headers)
         
         try:
-            init_resp = session.get(f"{BASE_URL}/workout", params={"page": 1, "pageSize": 10})
+            init_resp = session.get(f"{BASE_URL}/workouts", params={"page": 1, "pageSize": 10})
             init_resp.raise_for_status()
             data = init_resp.json()
             page_count = data.get('page_count', 1)
@@ -99,12 +99,12 @@ def fetch_and_transform_workout() -> List[Dict[str, Any]]:
             logger.error(f"Initialization failed: {e}")
             return []
 
-        pbar = tqdm(total=page_count, desc="Fetching workout")
+        pbar = tqdm(total=page_count, desc="Fetching Workouts")
         
         while page <= page_count:
             try:
                 response = session.get(
-                    f"{BASE_URL}/workout", 
+                    f"{BASE_URL}/workouts", 
                     params={"page": page, "pageSize": 10},
                     timeout=15
                 )
@@ -113,9 +113,9 @@ def fetch_and_transform_workout() -> List[Dict[str, Any]]:
                 
                 # Update page_count dynamically just in case
                 page_count = data.get('page_count', page_count)
-                workout = data.get('workout', [])
+                workouts = data.get('workouts', [])
 
-                for w in workout:
+                for w in workouts:
                     try:
                         workout = WorkoutModel(**w)
                         
@@ -187,12 +187,12 @@ def save_to_db(rows: List[Dict[str, Any]], db_path: Path):
     
     try:
         with sqlite3.connect(db_path) as conn:
-            df.to_sql('bronze.workout', conn, if_exists='replace', index=False)
+            df.to_sql('bronze.Workouts', conn, if_exists='replace', index=False)
             
-        logger.info(f"SUCCESS: Saved {len(df)} records to 'bronze.workout' in {db_path.name}")
+        logger.info(f"SUCCESS: Saved {len(df)} records to 'bronze.Workouts' in {db_path.name}")
     except Exception as e:
         logger.error(f"Database Save Error: {e}")
 
 if __name__ == "__main__":
-    data = fetch_and_transform_workout()
+    data = fetch_and_transform_workouts()
     save_to_db(data, DB_PATH)
