@@ -3,7 +3,7 @@ import sqlite3
 import logging
 import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 import requests
 import pandas as pd
@@ -35,15 +35,14 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("etl_workouts.log"),
+        logging.FileHandler("etl_history.log"),
         TqdmLoggingHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
 class SetModel(BaseModel):
-    index: int
-    set_type: str = Field(alias='type')
+    set_type: Optional[str] = Field(alias='type', default=None)
     weight_kg: Optional[float] = None
     reps: Optional[int] = None
     distance_meters: Optional[float] = None
@@ -54,35 +53,27 @@ class SetModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 class ExerciseModel(BaseModel):
-    index: int
-    title: str
-    notes: Optional[str] = None
     exercise_template_id: str
-    supersets_id: Optional[int] = None
     sets: List[SetModel] = []
     
     model_config = ConfigDict(populate_by_name=True)
 
 class WorkoutModel(BaseModel):
-    id: str
+    id: Union[int, str]
     title: str
-    description: Optional[str] = None
-    routine_id: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
-    updated_at: Optional[str] = None
-    created_at: Optional[str] = None
     exercises: List[ExerciseModel] = []
     
     model_config = ConfigDict(populate_by_name=True)
 
-def fetch_and_transform_workouts() -> List[Dict[str, Any]]:
+def fetch_and_flatten_history() -> List[Dict[str, Any]]:
     if not HEVY_API_KEY:
         logger.critical("Missing HEVY_API_KEY")
         raise ValueError("API Key not found")
 
     headers = {"api-key": HEVY_API_KEY}
-    flattened_rows = []
+    rows = []
     page = 1
     page_count = 1
     
@@ -93,13 +84,13 @@ def fetch_and_transform_workouts() -> List[Dict[str, Any]]:
             init_resp = session.get(f"{BASE_URL}/workouts", params={"page": 1, "pageSize": 10})
             init_resp.raise_for_status()
             data = init_resp.json()
-            page_count = data.get('page_count', 1)
+            page_count = max(1, data.get('page_count', 1))
             logger.info(f"Total pages to fetch: {page_count}")
         except Exception as e:
             logger.error(f"Initialization failed: {e}")
             return []
 
-        pbar = tqdm(total=page_count, desc="Fetching Workouts")
+        pbar = tqdm(total=page_count, desc="Fetching History")
         
         while page <= page_count:
             try:
@@ -108,66 +99,45 @@ def fetch_and_transform_workouts() -> List[Dict[str, Any]]:
                     params={"page": page, "pageSize": 10},
                     timeout=15
                 )
+                
+                if response.status_code == 404:
+                    break
+
                 response.raise_for_status()
                 data = response.json()
                 
-                # Update page_count dynamically just in case
-                page_count = data.get('page_count', page_count)
                 workouts = data.get('workouts', [])
+
+                if not workouts:
+                    break
 
                 for w in workouts:
                     try:
                         workout = WorkoutModel(**w)
                         
-                        base_row = {
-                            "workout_id": workout.id,
-                            "title": workout.title,
-                            "routine_id": workout.routine_id,
-                            "description": workout.description,
-                            "start_time": workout.start_time,
-                            "end_time": workout.end_time,
-                            "updated_at": workout.updated_at,
-                            "created_at": workout.created_at,
-                            "ingestion_timestamp": datetime.datetime.now().isoformat()
-                        }
-
-                        if not workout.exercises:
-                            flattened_rows.append(base_row)
-                            continue
-
                         for ex in workout.exercises:
-                            ex_row = base_row.copy()
-                            ex_row.update({
-                                "exercise_index": ex.index,
-                                "exercise_title": ex.title,
-                                "exercise_notes": ex.notes,
-                                "exercise_template_id": ex.exercise_template_id,
-                                "supersets_id": ex.supersets_id
-                            })
-
-                            if not ex.sets:
-                                flattened_rows.append(ex_row)
-                                continue
-
                             for s in ex.sets:
-                                final_row = ex_row.copy()
-                                final_row.update({
-                                    "set_index": s.index,
-                                    "set_type": s.set_type,
+                                row = {
+                                    "workout_id": workout.id,
+                                    "workout_title": workout.title,
+                                    "workout_start_time": workout.start_time,
+                                    "workout_end_time": workout.end_time,
+                                    "exercise_template_id": ex.exercise_template_id,
                                     "weight_kg": s.weight_kg,
                                     "reps": s.reps,
                                     "distance_meters": s.distance_meters,
                                     "duration_seconds": s.duration_seconds,
                                     "rpe": s.rpe,
-                                    "custom_metric": s.custom_metric
-                                })
-                                flattened_rows.append(final_row)
-
+                                    "custom_metric": s.custom_metric,
+                                    "set_type": s.set_type,
+                                    "ingestion_timestamp": datetime.datetime.now().isoformat()
+                                }
+                                rows.append(row)
                     except ValidationError as ve:
                         logger.warning(f"Validation Error in workout {w.get('id')}: {ve}")
 
-                pbar.update(1)
                 page += 1
+                pbar.update(1)
 
             except requests.RequestException as e:
                 logger.error(f"Network Error on page {page}: {e}")
@@ -175,11 +145,11 @@ def fetch_and_transform_workouts() -> List[Dict[str, Any]]:
         
         pbar.close()
 
-    return flattened_rows
+    return rows
 
 def save_to_db(rows: List[Dict[str, Any]], db_path: Path):
     if not rows:
-        logger.warning("No data to save.")
+        logger.warning("No history entries to save.")
         return
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,12 +157,12 @@ def save_to_db(rows: List[Dict[str, Any]], db_path: Path):
     
     try:
         with sqlite3.connect(db_path) as conn:
-            df.to_sql('bronze.Workouts', conn, if_exists='replace', index=False)
+            df.to_sql('bronze.ExerciseHistoryEntry', conn, if_exists='replace', index=False)
             
-        logger.info(f"SUCCESS: Saved {len(df)} records to 'bronze.Workouts' in {db_path.name}")
+        logger.info(f"SUCCESS: Saved {len(df)} records to 'bronze.ExerciseHistoryEntry' in {db_path.name}")
     except Exception as e:
         logger.error(f"Database Save Error: {e}")
 
 if __name__ == "__main__":
-    data = fetch_and_transform_workouts()
+    data = fetch_and_flatten_history()
     save_to_db(data, DB_PATH)
