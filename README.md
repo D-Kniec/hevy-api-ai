@@ -38,7 +38,6 @@ The system is designed around a "Fetch-Analyze-Act" loop:
 - [ ] Develop the prompt engineering logic for Gemini 1.5.
 - [ ] Create a basic Streamlit dashboard for manual trigger.
 
-
 ```mermaid
 ---
 config:
@@ -84,7 +83,3 @@ flowchart TB
   
     AGENT -->|6. POST Routine| HEVY
     AGENT -->|7. Log Decision| DB
-
-    ```
-
----
