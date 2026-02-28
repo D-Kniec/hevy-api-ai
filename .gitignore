@@ -1,0 +1,49 @@
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.so
+
+# Logs
+logs/
+*.log
+
+# Databases & Data Exports
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+src/data/*.db
+*.csv
+*.xlsx
+
+# Exclude test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Exclude IDE/Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Exclude macOS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Jupyter Notebook (if you ever use it for data exploration)
+.ipynb_checkpoints

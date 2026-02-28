@@ -1,0 +1,19 @@
+# API & Network
+requests>=2.31.0
+
+# Data Processing & ETL
+pandas>=2.2.0
+numpy>=1.26.0
+
+# Validation & Schemas
+pydantic>=2.6.0
+
+# Environment Configuration
+python-dotenv>=1.0.0
+
+# AI / LLM Integration
+google-genai>=0.3.0
+
+# CLI Interface & UX
+rich>=13.7.0
+tqdm>=4.66.0
