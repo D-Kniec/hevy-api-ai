@@ -50,7 +50,9 @@ class AIRecommendation(BaseModel):
     reps: int
     rpe_target: float
     strategy: str
+    rest_seconds: int
     reasoning: str
+
 
 class AIPlanResponse(BaseModel):
     recommendations: Dict[str, AIRecommendation]
@@ -135,10 +137,11 @@ def run_agent() -> None:
         new_exercise = {
             "exercise_template_id": template_id,
             "superset_id": exercise.get("superset_id"),
-            "rest_seconds": exercise["rest_seconds"],
+            "rest_seconds": recommendation.rest_seconds if recommendation else exercise.get("rest_seconds", 120),
             "notes": "",
             "sets": []
         }
+
 
         if recommendation:
             rpe_note = f" RPE {recommendation.rpe_target}" if recommendation.rpe_target else ""
