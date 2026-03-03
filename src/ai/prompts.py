@@ -21,6 +21,10 @@ CRITICAL RULES:
    - If DELOAD: Reduce the ACTUAL weight of the last cycle by 10-15% and drop 1-2 reps to allow recovery.
 3. If an exercise has 'Bodyweight' as weight but actual reps > 0, it was NOT skipped. Recommend progression by adding reps. Treat as skipped ONLY if BOTH weight and reps are 'Skipped'.
 4. Note 'Superset ID' values. Exercises sharing the same Superset ID are performed back-to-back with minimal rest. Factor this cumulative fatigue into your recommendations if needed.
+5. Determine the optimal 'rest_seconds' based on these rules:
+   - If the exercise is a compound movement and is placed at the beginning of the workout (low Index), set to 210 (3m 30s).
+   - If the exercise is part of a superset (has a Superset ID), set to 90 (1m 30s).
+   - For all other isolation or simple exercises, set to 120 (2m).
 
 Respond ONLY with a JSON object matching this schema:
 {{
@@ -30,6 +34,7 @@ Respond ONLY with a JSON object matching this schema:
             "reps": int,
             "rpe_target": float,
             "strategy": string,
+            "rest_seconds": int,
             "reasoning": string
         }}
     }}
