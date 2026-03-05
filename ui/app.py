@@ -5,8 +5,6 @@ import streamlit as st
 import plotly.express as px
 from dotenv import load_dotenv
 
-# --- DATABASE CONNECTION & QUERIES ---
-
 def initialize_environment() -> None:
     load_dotenv()
     if "api_client" not in st.session_state:
@@ -34,6 +32,20 @@ def fetch_table_data(table_name: str, limit: int = 5) -> pd.DataFrame | None:
         try:
             query = f"SELECT * FROM {table_name} LIMIT {limit};"
             return pd.read_sql_query(query, connection)
+        finally:
+            connection.close()
+    return None
+
+def fetch_last_ingestion_time() -> str | None:
+    connection = get_database_connection()
+    if connection:
+        try:
+            query = "SELECT MAX(ingestion_timestamp) as last_update FROM bronze_workouts;"
+            dataframe = pd.read_sql_query(query, connection)
+            if not dataframe.empty and pd.notna(dataframe.iloc[0]['last_update']):
+                return str(dataframe.iloc[0]['last_update'])
+        except Exception:
+            return None
         finally:
             connection.close()
     return None
@@ -117,8 +129,6 @@ def load_execution_plan_data() -> pd.DataFrame:
             connection.close()
     return pd.DataFrame()
 
-# --- UI COMPONENTS ---
-
 def render_sidebar() -> None:
     with st.sidebar:
         st.title("Hevy Progression Agent")
@@ -136,6 +146,16 @@ def render_sidebar() -> None:
             st.success("API Key configured")
         else:
             st.warning("API Key missing. Network operations disabled.")
+            
+        st.divider()
+        st.subheader("System Health")
+        last_update = fetch_last_ingestion_time()
+        
+        if last_update:
+            st.metric(label="Last Data Sync", value=str(last_update)[:16])
+        else:
+            st.metric(label="Last Data Sync", value="No Data")
+            st.caption("Run ETL Pipeline to fetch data.")
 
 def render_pipeline_tab() -> None:
     st.subheader("Bronze Layer Database Status")
@@ -203,6 +223,14 @@ def render_analytics_tab() -> None:
     if not exercise_progression.empty:
         st.subheader(f"Performance Metrics: {selected_exercise}")
         
+        if len(exercise_progression) >= 3:
+            recent_e1rm_deltas = exercise_progression["rep_max_progression"].dropna().tail(2)
+            if len(recent_e1rm_deltas) == 2 and (recent_e1rm_deltas <= 0).all():
+                st.error(
+                    f"🚨 Plateau Detected: No estimated 1RM progression for the last 2 cycles in {selected_exercise}. "
+                    "Consider rotating the exercise or adjusting volume."
+                )
+        
         metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
         latest_stats = exercise_progression.iloc[-1]
         
@@ -257,8 +285,6 @@ def render_analytics_tab() -> None:
             title="Average Weight Diff (Actual vs Planned)"
         )
         execution_col2.plotly_chart(figure_weight_diff, use_container_width=True)
-
-# --- MAIN APP ---
 
 def main() -> None:
     st.set_page_config(
