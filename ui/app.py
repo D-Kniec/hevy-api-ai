@@ -105,12 +105,11 @@ def load_execution_plan_data() -> pd.DataFrame:
         sdr.routine_name,
         sfh.cycle_number,
         COUNT(sfh.set_index) AS total_sets_performed,
-        ROUND(AVG(sfh.diff_weight_kg), 2) AS avg_weight_vs_plan_kg,
-        SUM(sfh.diff_reps) AS total_reps_vs_plan
+        ROUND(AVG(COALESCE(sfh.diff_weight_kg, 0)), 2) AS avg_weight_vs_plan_kg
     FROM silver_fact_workout_history sfh
     INNER JOIN silver_dim_exercise sde ON sde.exercise_template_id = sfh.exercise_template_id 
     INNER JOIN silver_dim_routine sdr ON sdr.routine_id = sfh.routine_id 
-    WHERE sfh.set_type = 'normal'
+    WHERE sfh.set_type = 'normal' AND sfh.planned_weight_kg IS NOT NULL
     GROUP BY 
         sde.exercise_name,
         sdr.routine_name,
@@ -200,91 +199,171 @@ def render_analytics_tab() -> None:
         st.warning("No data found in the silver tables. Make sure ETL pipeline has populated 'silver_fact_workout_history'.")
         return
         
-    control_col1, control_col2 = st.columns(2)
-    
     routines = progression_data["routine_name"].dropna().unique()
+    all_cycles = sorted(progression_data["cycle_number"].dropna().unique())
+    
+    control_col1, control_col2, control_col3 = st.columns(3)
+    
     with control_col1:
         selected_routine = st.selectbox("Select Routine", routines, key="routine_selector")
     
     filtered_by_routine = progression_data[progression_data["routine_name"] == selected_routine]
-    exercises = filtered_by_routine["exercise_name"].dropna().unique()
+    exercises = ["--- All Exercises ---"] + list(filtered_by_routine["exercise_name"].dropna().unique())
+    
     with control_col2:
         selected_exercise = st.selectbox("Select Exercise", exercises, key="exercise_selector")
+        
+    with control_col3:
+        selected_cycles = st.multiselect(
+            "Cycle Filter", 
+            options=all_cycles, 
+            default=all_cycles,
+            help="Leave empty to view all cycles or select specific ones."
+        )
+        
+    if not selected_cycles:
+        selected_cycles = all_cycles
     
-    exercise_progression = progression_data[
-        (progression_data["routine_name"] == selected_routine) & 
-        (progression_data["exercise_name"] == selected_exercise)
-    ]
-    exercise_execution = execution_data[
-        (execution_data["routine_name"] == selected_routine) & 
-        (execution_data["exercise_name"] == selected_exercise)
-    ]
-    
-    if not exercise_progression.empty:
-        st.subheader(f"Performance Metrics: {selected_exercise}")
+    if selected_exercise == "--- All Exercises ---":
+        routine_progression = progression_data[
+            (progression_data["routine_name"] == selected_routine) &
+            (progression_data["cycle_number"].isin(selected_cycles))
+        ]
         
-        if len(exercise_progression) >= 3:
-            recent_e1rm_deltas = exercise_progression["rep_max_progression"].dropna().tail(2)
-            if len(recent_e1rm_deltas) == 2 and (recent_e1rm_deltas <= 0).all():
-                st.error(
-                    f"🚨 Plateau Detected: No estimated 1RM progression for the last 2 cycles in {selected_exercise}. "
-                    "Consider rotating the exercise or adjusting volume."
-                )
+        routine_execution = execution_data[
+            (execution_data["routine_name"] == selected_routine) &
+            (execution_data["cycle_number"].isin(selected_cycles))
+        ]
         
-        metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-        latest_stats = exercise_progression.iloc[-1]
+        if not routine_progression.empty:
+            st.subheader(f"Routine Overview: {selected_routine}")
+            
+            chart_col1, chart_col2 = st.columns(2)
+            
+            figure_1rm_all = px.line(
+                routine_progression, 
+                x="cycle_number", 
+                y="estimated_1rm_kg", 
+                color="exercise_name",
+                markers=True,
+                title="1RM Trend (All Exercises)",
+                labels={
+                    "cycle_number": "Cycle Number",
+                    "estimated_1rm_kg": "Estimated 1RM (kg)",
+                    "exercise_name": "Exercise"
+                }
+            )
+            chart_col1.plotly_chart(figure_1rm_all, use_container_width=True)
+            
+            figure_volume_all = px.bar(
+                routine_progression, 
+                x="cycle_number", 
+                y="total_volume_kg",
+                color="exercise_name",
+                title="Volume Trend (Cumulative)",
+                labels={
+                    "cycle_number": "Cycle Number",
+                    "total_volume_kg": "Total Volume (kg)",
+                    "exercise_name": "Exercise"
+                }
+            )
+            chart_col2.plotly_chart(figure_volume_all, use_container_width=True)
+
+        if not routine_execution.empty:
+            st.subheader("Execution vs AI Plan")
+            figure_weight_diff_all = px.line(
+                routine_execution,
+                x="cycle_number",
+                y="avg_weight_vs_plan_kg",
+                color="exercise_name",
+                markers=True,
+                title="Average Weight Diff (All Exercises)",
+                labels={
+                    "cycle_number": "Cycle Number",
+                    "avg_weight_vs_plan_kg": "Average Weight Difference (kg)",
+                    "exercise_name": "Exercise"
+                }
+            )
+            st.plotly_chart(figure_weight_diff_all, use_container_width=True)
+            
+    else:
+        exercise_progression = progression_data[
+            (progression_data["routine_name"] == selected_routine) & 
+            (progression_data["exercise_name"] == selected_exercise) &
+            (progression_data["cycle_number"].isin(selected_cycles))
+        ]
         
-        e1rm_delta = latest_stats["rep_max_progression"] if pd.notna(latest_stats["rep_max_progression"]) else 0.0
-        metrics_col1.metric("Estimated 1RM", f"{latest_stats['estimated_1rm_kg']} kg", f"{e1rm_delta} kg")
+        exercise_execution = execution_data[
+            (execution_data["routine_name"] == selected_routine) & 
+            (execution_data["exercise_name"] == selected_exercise) &
+            (execution_data["cycle_number"].isin(selected_cycles))
+        ]
         
-        vol_delta = latest_stats["volume_progression"] if pd.notna(latest_stats["volume_progression"]) else 0.0
-        metrics_col2.metric("Total Volume", f"{latest_stats['total_volume_kg']} kg", f"{vol_delta} kg")
-        
-        weight_delta = latest_stats["weight_progression"] if pd.notna(latest_stats["weight_progression"]) else 0.0
-        metrics_col3.metric("Max Weight", f"{latest_stats['max_weight_kg']} kg", f"{weight_delta} kg")
-        
-        chart_col1, chart_col2 = st.columns(2)
-        
-        figure_1rm = px.line(
-            exercise_progression, 
-            x="cycle_number", 
-            y="estimated_1rm_kg", 
-            markers=True,
-            title="1RM Trend"
-        )
-        chart_col1.plotly_chart(figure_1rm, use_container_width=True)
-        
-        figure_volume = px.bar(
-            exercise_progression, 
-            x="cycle_number", 
-            y="total_volume_kg",
-            title="Volume Trend"
-        )
-        chart_col2.plotly_chart(figure_volume, use_container_width=True)
-        
-    if not exercise_execution.empty:
-        st.subheader("Execution vs AI Plan")
-        
-        execution_col1, execution_col2 = st.columns(2)
-        
-        figure_reps_diff = px.bar(
-            exercise_execution,
-            x="cycle_number",
-            y="total_reps_vs_plan",
-            title="Total Reps Diff (Actual vs Planned)",
-            color="total_reps_vs_plan",
-            color_continuous_scale=px.colors.diverging.RdYlGn
-        )
-        execution_col1.plotly_chart(figure_reps_diff, use_container_width=True)
-        
-        figure_weight_diff = px.line(
-            exercise_execution,
-            x="cycle_number",
-            y="avg_weight_vs_plan_kg",
-            markers=True,
-            title="Average Weight Diff (Actual vs Planned)"
-        )
-        execution_col2.plotly_chart(figure_weight_diff, use_container_width=True)
+        if not exercise_progression.empty:
+            st.subheader(f"Performance Metrics: {selected_exercise}")
+            
+            if len(exercise_progression) >= 3:
+                recent_e1rm_deltas = exercise_progression["rep_max_progression"].dropna().tail(2)
+                if len(recent_e1rm_deltas) == 2 and (recent_e1rm_deltas <= 0).all():
+                    st.error(
+                        f"🚨 Plateau Detected: No estimated 1RM progression for the last 2 cycles in {selected_exercise}. "
+                        "Consider rotating the exercise or adjusting volume."
+                    )
+            
+            metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+            latest_stats = exercise_progression.iloc[-1]
+            
+            e1rm_delta = latest_stats["rep_max_progression"] if pd.notna(latest_stats["rep_max_progression"]) else 0.0
+            metrics_col1.metric("Estimated 1RM", f"{latest_stats['estimated_1rm_kg']} kg", f"{e1rm_delta} kg")
+            
+            vol_delta = latest_stats["volume_progression"] if pd.notna(latest_stats["volume_progression"]) else 0.0
+            metrics_col2.metric("Total Volume", f"{latest_stats['total_volume_kg']} kg", f"{vol_delta} kg")
+            
+            weight_delta = latest_stats["weight_progression"] if pd.notna(latest_stats["weight_progression"]) else 0.0
+            metrics_col3.metric("Max Weight", f"{latest_stats['max_weight_kg']} kg", f"{weight_delta} kg")
+            
+            chart_col1, chart_col2 = st.columns(2)
+            
+            figure_1rm = px.line(
+                exercise_progression, 
+                x="cycle_number", 
+                y="estimated_1rm_kg", 
+                markers=True,
+                title="1RM Trend",
+                labels={
+                    "cycle_number": "Cycle Number",
+                    "estimated_1rm_kg": "Estimated 1RM (kg)"
+                }
+            )
+            chart_col1.plotly_chart(figure_1rm, use_container_width=True)
+            
+            figure_volume = px.bar(
+                exercise_progression, 
+                x="cycle_number", 
+                y="total_volume_kg",
+                title="Volume Trend",
+                labels={
+                    "cycle_number": "Cycle Number",
+                    "total_volume_kg": "Total Volume (kg)"
+                }
+            )
+            chart_col2.plotly_chart(figure_volume, use_container_width=True)
+            
+        if not exercise_execution.empty:
+            st.subheader("Execution vs AI Plan")
+            
+            figure_weight_diff = px.line(
+                exercise_execution,
+                x="cycle_number",
+                y="avg_weight_vs_plan_kg",
+                markers=True,
+                title="Average Weight Diff (Actual vs Planned)",
+                labels={
+                    "cycle_number": "Cycle Number",
+                    "avg_weight_vs_plan_kg": "Average Weight Difference (kg)"
+                }
+            )
+            st.plotly_chart(figure_weight_diff, use_container_width=True)
 
 def main() -> None:
     st.set_page_config(
